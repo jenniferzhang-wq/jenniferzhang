@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Emergency Dentist - Game</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{overflow:hidden;background:#1a0a0a;cursor:default;user-select:none;font-family:'Segoe UI',Arial,sans-serif}
+canvas{display:block}
+#ui{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
+#countdown-wrap{position:absolute;top:16px;left:50%;transform:translateX(-50%);width:80px;height:80px}
+#countdown-ring{position:absolute;top:0;left:0;width:100%;height:100%}
+#countdown-text{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:30px;font-weight:bold;color:#ff4444;font-family:Arial}
+#status{position:absolute;top:16px;right:20px;color:#eee;font-size:15px;text-align:right;line-height:1.7;background:rgba(0,0,0,0.5);padding:12px 16px;border-radius:12px;border:1px solid rgba(255,255,255,0.08)}
+#status .lose{color:#ff6666;font-weight:bold}
+#status .win{color:#66ff88;font-weight:bold}
+#gameover{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:50;opacity:0;transition:opacity 0.6s;pointer-events:none}
+#gameover.show{opacity:1;pointer-events:auto}
+#gameover h1{color:#ff4444;font-size:48px;margin-bottom:12px;text-shadow:0 0 30px rgba(255,0,0,0.5)}
+#gameover p{color:#ddd;font-size:20px;margin-bottom:32px}
+#gameover button,#win button{padding:14px 50px;background:#e85544;color:#fff;border:none;border-radius:30px;font-size:18px;cursor:pointer;transition:background 0.3s;letter-spacing:1px}
+#gameover button:hover{background:#ff6655}
+#win{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:50;opacity:0;transition:opacity 0.6s;pointer-events:none}
+#win.show{opacity:1;pointer-events:auto}
+#win h1{color:#66ff88;font-size:48px;margin-bottom:12px;text-shadow:0 0 30px rgba(0,255,100,0.4)}
+#win p{color:#ddd;font-size:20px;margin-bottom:32px}
+#win button{background:#44cc66}
+#win button:hover{background:#66ee88}
+#painflash{position:fixed;top:0;left:0;width:100%;height:100%;background:radial-gradient(ellipse at center,transparent 30%,rgba(220,20,20,0.45) 100%);opacity:0;pointer-events:none;z-index:8;transition:opacity 0.15s}
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="countdown-wrap">
+    <svg id="countdown-ring" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="7"/>
+      <circle id="countdown-circle" cx="50" cy="50" r="42" fill="none" stroke="#ff4444" stroke-width="7"
+        stroke-linecap="round" stroke-dasharray="264" stroke-dashoffset="0" transform="rotate(-90 50 50)"/>
+    </svg>
+    <div id="countdown-text">2.5</div>
+  </div>
+  <div id="status">
+    <div>Healed: <span id="healedCount" class="win">0</span></div>
+    <div class="lose">Lost: <span id="lostCount">0</span> / 3</div>
+    <div style="color:#aaa;font-size:13px;margin-top:6px">Cavities left: <span id="totalCav" style="color:#ffcc44">0</span></div>
+  </div>
+</div>
+<div id="painflash"></div>
+<div id="gameover"><h1>Game Over</h1><p>Too many teeth were lost...</p><button onclick="restartGame()">Try Again</button></div>
+<div id="win"><h1>All Teeth Saved!</h1><p>The little girl can smile again!</p><button onclick="restartGame()">Play Again</button></div>
+<canvas id="c"></canvas>
+<script>
+var c=document.getElementById('c'),ctx=c.getContext('2d'),W,H;
+function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight}
+resize();window.addEventListener('resize',resize);
+
+var time=0,teeth=[],activeTarget=null,countdown=2.5,countdownMax=2.5,currentStep='bug';
+var lostCount=0,healedCount=0,totalCavities=0,gameState='playing';
+var shakeX=0,shakeY=0,shakeIntensity=0,isPunishing=false,punishTimer=0;
+var girlState='normal',girlTimer=0,candyEatingTimer=0,arrowBob=0;
+var countdownCircle=document.getElementById('countdown-circle'),countdownText=document.getElementById('countdown-text');
+var healedCountEl=document.getElementById('healedCount'),lostCountEl=document.getElementById('lostCount'),totalCavEl=document.getElementById('totalCav');
+var gameoverEl=document.getElementById('gameover'),winEl=document.getElementById('win'),painflashEl=document.getElementById('painflash');
+
+function lerp(a,b,t){return a+(b-a)*t}
+function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v))}
+
+// ========== 角色绘制（用户提供的代码） ==========
+var C={skin:'#f9e8dd',hair:'#775544',bowPink:'#f2c8d8',dress:'#fcfaf0',tie:'#e89890',blush:'#f2c2b4',black:'#222222',eyeWhite:'#ffffff'};
+
+function drawGirlOnCtx(c2,state){
+  var g=c2.getContext('2d');
+  g.clearRect(0,0,980,960);
+  g.lineWidth=3;g.lineCap='round';g.lineJoin='round';
+
+  // 双马尾
+  g.fillStyle=C.hair;g.strokeStyle=C.black;
+  g.beginPath();g.ellipse(110,480,110,160,-0.25,0,Math.PI*2);g.fill();g.stroke();
+  g.beginPath();g.ellipse(870,480,110,160,0.25,0,Math.PI*2);g.fill();g.stroke();
+
+  // 头顶头发
+  g.beginPath();g.moveTo(175,340);g.bezierCurveTo(220,210,480,180,490,110);g.bezierCurveTo(500,180,760,210,805,340);g.bezierCurveTo(830,460,760,540,690,570);g.lineTo(290,570);g.bezierCurveTo(220,540,150,460,175,340);g.fill();g.stroke();
+
+  // 呆毛
+  g.beginPath();g.arc(490,112,32,0.2,Math.PI-0.2);g.fill();g.stroke();
+
+  // 蝴蝶结
+  g.fillStyle=C.bowPink;
+  g.beginPath();g.ellipse(145,355,58,72,-0.3,0,Math.PI*2);g.fill();g.stroke();
+  g.beginPath();g.ellipse(835,355,58,72,0.3,0,Math.PI*2);g.fill();g.stroke();
+
+  // 脸
+  g.fillStyle=C.skin;g.beginPath();g.ellipse(490,460,310,330,0,0,Math.PI*2);g.fill();g.stroke();
+
+  // 刘海
+  g.strokeStyle=C.hair;g.lineWidth=2;
+  g.beginPath();g.moveTo(270,310);g.lineTo(290,296);g.stroke();
+  g.beginPath();g.moveTo(285,322);g.lineTo(305,308);g.stroke();
+  g.beginPath();g.moveTo(690,310);g.lineTo(710,296);g.stroke();
+  g.beginPath();g.moveTo(705,322);g.lineTo(725,308);g.stroke();
+  g.lineWidth=3;
+
+  // 眼睛
+  g.fillStyle=C.black;
+  g.beginPath();g.ellipse(345,480,115,140,0,0,Math.PI*2);g.fill();
+  g.beginPath();g.ellipse(635,480,115,140,0,0,Math.PI*2);g.fill();
+  if(state==='pain'){
+    // 眯眼
+    g.strokeStyle=C.black;g.lineWidth=3;
+    g.beginPath();g.moveTo(230,475);g.quadraticCurveTo(345,510,460,475);g.stroke();
+    g.beginPath();g.moveTo(520,475);g.quadraticCurveTo(635,510,750,475);g.stroke();
+  } else {
+    g.fillStyle=C.eyeWhite;
+    g.beginPath();g.ellipse(310,435,42,50,0,0,Math.PI*2);g.fill();
+    g.beginPath();g.ellipse(378,510,18,22,0,0,Math.PI*2);g.fill();
+    g.beginPath();g.ellipse(600,435,42,50,0,0,Math.PI*2);g.fill();
+    g.beginPath();g.ellipse(668,510,18,22,0,0,Math.PI*2);g.fill();
+  }
+
+  // 睫毛
+  g.strokeStyle=C.black;g.lineWidth=3;
+  for(var i=0;i<4;i++){var ox=245+i*42;g.beginPath();g.moveTo(ox,360);g.lineTo(ox-5,335);g.stroke()}
+  for(var i=0;i<4;i++){var ox=545+i*42;g.beginPath();g.moveTo(ox,360);g.lineTo(ox+5,335);g.stroke()}
+
+  // 腮红
+  g.fillStyle=C.blush;g.globalAlpha=0.7;
+  g.beginPath();g.ellipse(300,590,66,48,0,0,Math.PI*2);g.fill();
+  g.beginPath();g.ellipse(680,590,66,48,0,0,Math.PI*2);g.fill();
+  g.globalAlpha=1;
+
+  // 嘴巴
+  if(state==='pain'){
+    g.fillStyle='#cc3344';g.beginPath();g.ellipse(490,610,55,35,0,0,Math.PI*2);g.fill();g.strokeStyle=C.black;g.stroke();
+    g.fillStyle='#fff';g.beginPath();g.rect(435,600,110,10);g.fill();
+  } else if(state==='eating'){
+    var ch=Math.sin(time*8);
+    g.fillStyle='#cc3344';g.beginPath();g.ellipse(490,610,55,25+ch*15,0,0,Math.PI*2);g.fill();g.strokeStyle=C.black;g.stroke();
+    g.fillStyle='#fff';g.beginPath();g.rect(440,600,100,8);g.fill();
+  } else {
+    g.fillStyle='#ff9988';g.beginPath();g.moveTo(432,560);g.lineTo(490,680);g.lineTo(548,560);g.closePath();g.fill();g.strokeStyle=C.black;g.stroke();
+  }
+
+  // 上衣
+  g.fillStyle=C.dress;g.beginPath();g.moveTo(230,710);g.bezierCurveTo(180,940,800,940,750,710);g.lineTo(640,700);g.lineTo(340,700);g.closePath();g.fill();g.stroke();
+
+  // 领结
+  g.fillStyle=C.tie;g.beginPath();g.moveTo(410,700);g.lineTo(450,780);g.lineTo(490,735);g.lineTo(530,780);g.lineTo(570,700);g.lineTo(490,720);g.closePath();g.fill();g.stroke();
+
+  // 手
+  g.fillStyle=C.skin;
+  g.beginPath();g.ellipse(240,740,62,72,-0.15,0,Math.PI*2);g.fill();g.stroke();
+  g.beginPath();g.ellipse(740,740,62,72,0.15,0,Math.PI*2);g.fill();g.stroke();
+  g.strokeStyle=C.black;g.lineWidth=2;
+  g.beginPath();g.moveTo(210,715);g.lineTo(232,708);g.stroke();
+  g.beginPath();g.moveTo(222,750);g.lineTo(244,746);g.stroke();
+  g.beginPath();g.moveTo(748,750);g.lineTo(770,746);g.stroke();
+  g.beginPath();g.moveTo(768,715);g.lineTo(746,708);g.stroke();
+
+  // 痛苦特效
+  if(state==='pain'){
+    g.strokeStyle='#cc2222';g.lineWidth=3;
+    g.beginPath();g.moveTo(200,380);g.lineTo(180,360);g.stroke();
+    g.beginPath();g.moveTo(220,370);g.lineTo(210,345);g.stroke();
+    g.beginPath();g.moveTo(760,380);g.lineTo(780,360);g.stroke();
+    g.beginPath();g.moveTo(740,370);g.lineTo(750,345);g.stroke();
+    g.fillStyle='rgba(120,180,255,0.5)';
+    for(var di=0;di<3;di++){
+      var dx=180+di*30,dy=400+Math.sin(time*8+di*2)*15;
+      g.beginPath();g.moveTo(dx,dy-8);g.quadraticCurveTo(dx+5,dy,dx,dy+5);g.quadraticCurveTo(dx-5,dy,dx,dy-8);g.fill();
+    }
+    for(var di=0;di<3;di++){
+      var dx=770+di*30,dy=400+Math.sin(time*8+di*2+1)*15;
+      g.beginPath();g.moveTo(dx,dy-8);g.quadraticCurveTo(dx+5,dy,dx,dy+5);g.quadraticCurveTo(dx-5,dy,dx,dy-8);g.fill();
+    }
+  }
+}
+
+// 离屏画布缓存角色
+var girlCanvas=document.createElement('canvas');
+girlCanvas.width=980;girlCanvas.height=960;
+var girlDirtyState='';
+
+function drawGirlCached(cx,cy,s,state){
+  if(state!==girlDirtyState){drawGirlOnCtx(girlCanvas,state);girlDirtyState=state}
+  ctx.drawImage(girlCanvas,0,0,980,960,cx-980*s/2,cy-960*s/2,980*s,960*s);
+}
+
+// ========== 牙齿相关 ==========
+function createTeeth(){
+  teeth=[];
+  function make(row,gi,x,y,w,h,ang){
+    var cav=Math.random()<0.75;
+    return{id:gi,row:row,x:x,y:y,w:w,h:h,angle:ang,
+      baseColor:['#f8f8f8','#f3f3f3','#eeeeee','#f5f5f5'][Math.floor(Math.random()*4)],
+      isCavity:cav,hasBug:cav,bugRemoved:false,cavityFilled:false,isLost:false,isHealed:false,
+      cavityX:(Math.random()-0.5)*2,cavityY:h*(0.35+Math.random()*0.35),cavitySize:0.3+Math.random()*0.4,
+      isActive:false,bugDir:Math.random()<0.5?-1:1,
+      highlightX:-w*0.2+Math.random()*w*0.15,highlightY:-h*0.25,highlightSize:0.08+Math.random()*0.06};
+  }
+  var nU=16,nL=16,mx=W/2,my=H*0.42,aW=W*0.26,aH=H*0.14;
+  for(var i=0;i<nU;i++){var t=(i+0.5)/nU,a=Math.PI-t*Math.PI;teeth.push(make('U',i,mx+Math.cos(a)*aW,my+Math.sin(a)*aH-aH*0.5,aW*2/(nU+1)*0.58,H*0.058,-Math.cos(a)*0.35))}
+  for(var j=0;j<nL;j++){var t2=(j+0.5)/nL,a2=Math.PI+t2*Math.PI;teeth.push(make('L',j+50,mx+Math.cos(a2)*aW,my+Math.sin(a2)*aH*0.9+aH*0.5,aW*2/(nL+1)*0.58,H*0.058,-Math.cos(a2)*0.35))}
+  totalCavities=teeth.filter(function(t){return t.isCavity}).length;
+  totalCavEl.textContent=totalCavities;
+}
+
+function startNextChallenge(){
+  if(gameState!=='playing')return;
+  var cav=teeth.filter(function(t){return t.isCavity&&!t.isLost&&!t.cavityFilled});
+  if(cav.length===0){winEl.classList.add('show');gameState='won';return}
+  activeTarget=cav[Math.floor(Math.random()*cav.length)];activeTarget.isActive=true;
+  countdown=countdownMax=2.5;currentStep='bug';
+}
+
+function gameOver(){gameState='over';gameoverEl.classList.add('show')}
+function restartGame(){gameoverEl.classList.remove('show');winEl.classList.remove('show');healedCount=0;lostCount=0;gameState='playing';time=0;shakeIntensity=0;activeTarget=null;isPunishing=false;girlState='normal';girlDirtyState='';lostCountEl.textContent='0';healedCountEl.textContent='0';createTeeth();startNextChallenge()}
+
+function triggerPunishment(){
+  isPunishing=true;punishTimer=0;shakeIntensity=14;girlState='pain';girlTimer=0;
+  painflashEl.style.opacity='1';setTimeout(function(){painflashEl.style.opacity='0'},350);
+  var healthy=teeth.filter(function(t){return!t.isCavity&&!t.isLost&&!t.isHealed});
+  var n=2+Math.floor(Math.random()*2);
+  for(var i=0;i<n&&healthy.length>0;i++){
+    var idx=Math.floor(Math.random()*healthy.length),t=healthy[idx];
+    t.isCavity=true;t.hasBug=true;t.bugRemoved=false;t.cavityFilled=false;t.isHealed=false;
+    t.cavityX=(Math.random()-0.5)*2;t.cavityY=t.h*(0.35+Math.random()*0.35);t.cavitySize=0.3+Math.random()*0.4;t.bugDir=Math.random()<0.5?-1:1;
+    healthy.splice(idx,1);totalCavities++;
+  }
+  if(activeTarget)countdown=Math.max(0,countdown-1);
+  totalCavEl.textContent=totalCavities;
+  setTimeout(function(){isPunishing=false;shakeIntensity=0;girlState='eating';girlTimer=0;girlDirtyState='';setTimeout(function(){if(girlState==='eating'){girlState='normal';girlDirtyState=''}},2500)},800);
+}
+
+function completeCavity(t){
+  t.isCavity=false;t.cavityFilled=true;t.isHealed=true;healedCount++;healedCountEl.textContent=healedCount;
+  totalCavities=teeth.filter(function(t){return t.isCavity}).length;totalCavEl.textContent=totalCavities;
+  if(activeTarget===t){activeTarget.isActive=false;activeTarget=null;girlDirtyState='';setTimeout(startNextChallenge,350)}
+}
+
+// ========== 牙齿绘制 ==========
+function drawToothShape(x,y,w,h,r){
+  var hw=w/2,hh=h/2;r=r||0.3;
+  ctx.beginPath();ctx.moveTo(x-hw,y-hh);ctx.lineTo(x-hw,y+hh-hh*r);ctx.quadraticCurveTo(x-hw,y+hh,x-hw+hw*r,y+hh);ctx.lineTo(x+hw-hw*r,y+hh);ctx.quadraticCurveTo(x+hw,y+hh,x+hw,y+hh-hh*r);ctx.lineTo(x+hw,y-hh);ctx.closePath();
+}
+
+function drawTooth(t,isActive){
+  ctx.save();var hw=t.w/2,hh=t.h/2,cx=t.x,cy=t.y;
+  if(t.isLost){
+    drawToothShape(cx,cy,t.w,t.h,0.4);var lg=ctx.createLinearGradient(cx,cy-hh,cx,cy+hh);lg.addColorStop(0,'#888');lg.addColorStop(0.5,'#666');lg.addColorStop(1,'#555');ctx.fillStyle=lg;ctx.fill();ctx.strokeStyle='#4a4a4a';ctx.lineWidth=2;ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx-hw*0.6,cy-hh*0.3);ctx.lineTo(cx+hw*0.4,cy+hh*0.5);ctx.strokeStyle='#ff4444';ctx.lineWidth=2.5;ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx+hw*0.2,cy-hh*0.2);ctx.lineTo(cx-hw*0.2,cy+hh*0.4);ctx.stroke();ctx.restore();return;
+  }
+  drawToothShape(cx,cy,t.w,t.h,0.4);
+  if(t.isHealed){var hg=ctx.createLinearGradient(cx,cy-hh,cx-hw*0.3,cy+hh);hg.addColorStop(0,'#ffffff');hg.addColorStop(0.4,'#f8f8f8');hg.addColorStop(1,'#f0f0f0');ctx.fillStyle=hg}
+  else if(t.isCavity){var yl=0.45+Math.sin(t.id*1.5)*0.08;var cr=lerp(250,185,yl),cg=lerp(248,160,yl),cb=lerp(240,75,yl);var cg2=ctx.createLinearGradient(cx,cy-hh,cx,cy+hh);cg2.addColorStop(0,'rgb('+Math.round(cr)+','+Math.round(cg)+','+Math.round(cb)+')');cg2.addColorStop(1,'rgb('+Math.round(cr-15)+','+Math.round(cg-20)+','+Math.round(cb-15)+')');ctx.fillStyle=cg2}
+  else{var fg=ctx.createLinearGradient(cx,cy-hh,cx-hw*0.3,cy+hh);fg.addColorStop(0,'#ffffff');fg.addColorStop(0.3,'#fafafa');fg.addColorStop(1,'#eee');ctx.fillStyle=fg}
+  ctx.fill();ctx.strokeStyle=t.isHealed?'#d0d0d0':'#b0b0b0';ctx.lineWidth=1.5;ctx.stroke();
+
+  if(!t.isLost){ctx.fillStyle='rgba(255,255,255,0.5)';ctx.beginPath();ctx.ellipse(cx+t.highlightX,cy+t.highlightY,t.highlightSize*t.w,t.highlightSize*t.h*0.6,-0.3,0,Math.PI*2);ctx.fill()}
+  if(!t.isLost){ctx.strokeStyle='rgba(180,180,180,0.3)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx,cy-hh*0.6);ctx.lineTo(cx,cy+hh*0.5);ctx.stroke()}
+
+  if(t.isCavity&&!t.cavityFilled){
+    var cs=t.cavitySize*8;
+    ctx.fillStyle='#0d0805';ctx.beginPath();ctx.arc(cx+t.cavityX,cy+t.cavityY,cs+1,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#1a0f08';ctx.beginPath();ctx.arc(cx+t.cavityX,cy+t.cavityY,cs,0,Math.PI*2);ctx.fill();
+    var cg3=ctx.createRadialGradient(cx+t.cavityX-cs*0.3,cy+t.cavityY-cs*0.3,0,cx+t.cavityX,cy+t.cavityY,cs);cg3.addColorStop(0,'rgba(40,20,10,0.5)');cg3.addColorStop(1,'rgba(10,5,2,0.9)');ctx.fillStyle=cg3;ctx.beginPath();ctx.arc(cx+t.cavityX,cy+t.cavityY,cs,0,Math.PI*2);ctx.fill();
+    if(t.hasBug&&!t.bugRemoved){
+      var bx=cx+t.cavityX+t.bugDir*cs*0.4,by=cy+t.cavityY;ctx.strokeStyle='#3a7020';ctx.lineWidth=1.2;
+      for(var si=0;si<5;si++){var wsy=by-si*4,wsx=bx+Math.sin(time*5.5+t.id+si*0.8)*2.5;ctx.fillStyle=si===4?'#4a8820':'#5a9a2f';ctx.beginPath();ctx.arc(wsx,wsy,3.8-si*0.35,0,Math.PI*2);ctx.fill();ctx.stroke()}
+      var ehx=bx+Math.sin(time*5.5+t.id)*2.5,ehy=by-5*4;
+      ctx.fillStyle='#3e7518';ctx.beginPath();ctx.arc(ehx,ehy,5.5,0,Math.PI*2);ctx.fill();ctx.stroke();
+      ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(ehx-2,ehy-1,2.2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(ehx+2,ehy-1,2.2,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#000';ctx.beginPath();ctx.arc(ehx-2,ehy-0.5,1.2,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(ehx+2,ehy-0.5,1.2,0,Math.PI*2);ctx.fill();
+    }
+  }
+
+  if(isActive){
+    var pulse=0.5+Math.sin(time*6)*0.5;ctx.strokeStyle='rgba(255,210,50,'+pulse+')';ctx.lineWidth=3;ctx.setLineDash([5,5]);
+    ctx.beginPath();ctx.moveTo(cx-hw-5,cy-hh-5);ctx.lineTo(cx-hw-5,cy+hh+5);ctx.lineTo(cx+hw+5,cy+hh+5);ctx.lineTo(cx+hw+5,cy-hh-5);ctx.closePath();ctx.stroke();ctx.setLineDash([]);
+    var glow=ctx.createRadialGradient(cx,cy,hw*0.5,cx,cy,hw*1.5);glow.addColorStop(0,'rgba(255,200,50,'+pulse*0.15+')');glow.addColorStop(1,'rgba(255,200,50,0)');ctx.fillStyle=glow;ctx.fillRect(cx-hw*2,cy-hh*2,hw*4,hh*4);
+    arrowBob=Math.sin(time*3);var ay=cy-hh-22+arrowBob*4;
+    ctx.fillStyle='#ffcc44';ctx.beginPath();ctx.moveTo(cx,ay-12);ctx.lineTo(cx-8,ay-2);ctx.lineTo(cx+8,ay-2);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 9px Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('!',cx,ay-5);
+  }
+  ctx.restore();
+}
+
+function drawMouthBg(){
+  var mx=W/2,my=H*0.42;
+  var lg=ctx.createRadialGradient(mx,my,W*0.05,mx,my,W*0.38);lg.addColorStop(0,'#6b0f1a');lg.addColorStop(0.6,'#e83a4a');lg.addColorStop(1,'#c22030');
+  ctx.fillStyle=lg;ctx.beginPath();ctx.ellipse(mx,my,W*0.37,H*0.3,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#aa2030';ctx.lineWidth=2.5;ctx.stroke();
+  var ig=ctx.createRadialGradient(mx,my,W*0.02,mx,my,W*0.28);ig.addColorStop(0,'#3a0810');ig.addColorStop(1,'#6b0f1a');
+  ctx.fillStyle=ig;ctx.beginPath();ctx.ellipse(mx,my,W*0.28,H*0.2,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(248,165,176,0.3)';
+  ctx.beginPath();ctx.ellipse(mx+W*0.08,my-H*0.04,W*0.05,H*0.02,-0.15,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(mx-W*0.1,my-H*0.06,W*0.035,H*0.015,0.1,0,Math.PI*2);ctx.fill();
+}
+
+function drawTargetLabel(){
+  if(!activeTarget)return;ctx.save();
+  var ty=activeTarget.y-activeTarget.h/2-35+arrowBob*4;
+  ctx.fillStyle='rgba(0,0,0,0.5)';drawRoundRect(activeTarget.x-55,ty-18,110,22,11,ctx.fillStyle,null);
+  ctx.fillStyle='#ffcc44';ctx.font='bold 13px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(currentStep==='bug'?'🐛 Click the worm!':'🕳️ Fill the cavity!',activeTarget.x,ty-7);
+  ctx.restore();
+}
+
+function drawRoundRect(x,y,w,h,r,fill,stroke){
+  ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
+  if(fill){ctx.fillStyle=fill;ctx.fill()}if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=2;ctx.stroke()}
+}
+
+// ========== 主循环 ==========
+function update(dt){
+  time+=dt;
+  if(gameState==='playing'){
+    if(activeTarget){
+      countdown-=dt;var pct=Math.max(0,countdown/countdownMax);
+      countdownCircle.setAttribute('stroke-dashoffset',264*(1-pct));countdownText.textContent=Math.max(0,countdown).toFixed(1);
+      if(countdown<=0.8){countdownCircle.setAttribute('stroke','#ff2222');countdownText.style.color='#ff2222'}
+      else{countdownCircle.setAttribute('stroke','#ff4444');countdownText.style.color='#ff4444'}
+      if(countdown<=0){activeTarget.isLost=true;activeTarget.isActive=false;lostCount++;lostCountEl.textContent=lostCount;if(lostCount>=3){girlState='pain';girlDirtyState='';setTimeout(gameOver,600)}activeTarget=null;setTimeout(startNextChallenge,400)}
+    }
+    if(isPunishing){punishTimer+=dt;shakeIntensity=lerp(14,0,clamp(punishTimer/0.8,0,1));if(punishTimer>0.8)shakeIntensity=0}
+  }
+  shakeX=(Math.random()-0.5)*shakeIntensity;shakeY=(Math.random()-0.5)*shakeIntensity;
+
+  ctx.clearRect(0,0,W,H);drawMouthBg();
+  ctx.save();ctx.translate(shakeX,shakeY);
+  for(var i=0;i<teeth.length;i++)drawTooth(teeth[i],teeth[i]===activeTarget);
+  if(activeTarget)drawTargetLabel();ctx.restore();
+
+  // 绘制角色
+  var sc=Math.min(W/980,H/960)*0.55;
+  if(girlState==='pain')sc*=1.15;
+  drawGirlCached(W*0.12,H*0.52,sc,girlState);
+
+  if(isPunishing){
+    var ra=clamp(punishTimer*5,0,0.2)-clamp((punishTimer-0.15)*6,0,0.2);
+    if(ra>0){ctx.fillStyle='rgba(255,20,20,'+ra+')';ctx.fillRect(0,0,W,H)}
+  }
+  ctx.strokeStyle='rgba(255,80,40,0.1)';ctx.lineWidth=1;ctx.strokeRect(1,1,W-2,H-2);
+}
+
+function handleClick(e){
+  if(gameState!=='playing')return;
+  var rect=c.getBoundingClientRect();
+  var cx=(e.clientX||e.touches[0].clientX)-rect.left-shakeX;
+  var cy=(e.clientY||e.touches[0].clientY)-rect.top-shakeY;
+  for(var i=0;i<teeth.length;i++){
+    var t=teeth[i];if(t.isLost||t.isHealed||t.cavityFilled)continue;
+    var hw=t.w/2,hh=t.h/2;
+    if(cx>=t.x-hw-6&&cx<=t.x+hw+6&&cy>=t.y-hh-6&&cy<=t.y+hh+6){
+      if(t===activeTarget){
+        if(currentStep==='bug'&&t.hasBug&&!t.bugRemoved){t.bugRemoved=true;t.hasBug=false;currentStep='cavity';return}
+        else if(currentStep==='cavity'){completeCavity(t);return}
+      } else if(!t.isCavity){triggerPunishment();return}
+      else{return}
+    }
+  }
+}
+c.addEventListener('mousedown',handleClick);
+c.addEventListener('touchstart',function(e){e.preventDefault();handleClick(e)},{passive:false});
+
+createTeeth();startNextChallenge();
+var lastT=performance.now();
+(function loop(){var now=performance.now();var dt=Math.min((now-lastT)/1000,0.05);lastT=now;update(dt);requestAnimationFrame(loop)})();
+</script>
+</body>
+</html>
